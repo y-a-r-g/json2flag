@@ -36,25 +36,40 @@ func ReadConfigData(data []byte) error {
 		return err
 	}
 
+	return decodeConfig(config, "")
+}
+
+func decodeConfig(config map[string]interface{}, prefix string) error {
 	for k, v := range config {
+		name := k
+		if prefix != "" {
+			name = fmt.Sprintf("%s%s%s", prefix, structDelimiter, k)
+		}
+
 		switch v.(type) {
 		case string:
-			if err := flag.Set(k, v.(string)); err != nil {
+			if err := flag.Set(name, v.(string)); err != nil {
 				return err
 			}
 			break
 		case bool:
-			if err := flag.Set(k, strconv.FormatBool(v.(bool))); err != nil {
+			if err := flag.Set(name, strconv.FormatBool(v.(bool))); err != nil {
 				return err
 			}
 			break
 		case float64:
-			if err := flag.Set(k, strconv.FormatFloat(v.(float64), 'G', -1, 64)); err != nil {
+			if err := flag.Set(name, strconv.FormatFloat(v.(float64), 'G', -1, 64)); err != nil {
 				return err
 			}
 			break
 		default:
-			return ErrUnsupportedValueType
+			if sub, ok := v.(map[string]interface{}); ok {
+				if err := decodeConfig(sub, name); err != nil {
+					return err
+				}
+			} else {
+				return ErrUnsupportedValueType
+			}
 		}
 	}
 
