@@ -6,8 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strconv"
+	"strings"
 )
+
+//TODO: passed flags should overwrite json values
 
 var ErrUnsupportedValueType = fmt.Errorf("unsupported config value type")
 
@@ -32,7 +36,8 @@ func ReadConfigData(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	config := map[string]interface{}{}
 
-	if err := decoder.Decode(&config); err != nil {
+	err := decoder.Decode(&config)
+	if err != nil {
 		return err
 	}
 
@@ -41,6 +46,7 @@ func ReadConfigData(data []byte) error {
 
 func decodeConfig(config map[string]interface{}, prefix string) error {
 	for k, v := range config {
+		var err error
 		name := k
 		if prefix != "" {
 			name = fmt.Sprintf("%s%s%s", prefix, structDelimiter, k)
@@ -48,30 +54,62 @@ func decodeConfig(config map[string]interface{}, prefix string) error {
 
 		switch v.(type) {
 		case string:
-			if err := flag.Set(name, v.(string)); err != nil {
-				return err
-			}
+			err = flag.Set(name, v.(string))
 			break
 		case bool:
-			if err := flag.Set(name, strconv.FormatBool(v.(bool))); err != nil {
-				return err
-			}
+			err = flag.Set(name, strconv.FormatBool(v.(bool)))
 			break
 		case float64:
-			if err := flag.Set(name, strconv.FormatFloat(v.(float64), 'G', -1, 64)); err != nil {
-				return err
-			}
+			err = flag.Set(name, strconv.FormatFloat(v.(float64), 'G', -1, 64))
 			break
 		default:
-			if sub, ok := v.(map[string]interface{}); ok {
-				if err := decodeConfig(sub, name); err != nil {
-					return err
-				}
-			} else {
+			sub, ok := v.(map[string]interface{})
+			if !ok {
 				return ErrUnsupportedValueType
 			}
+
+			err = decodeConfig(sub, name)
+		}
+		if err != nil && !strings.HasPrefix(err.Error(), "no such flag") {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func WriteConfigFile(name string, perm os.FileMode) error {
+	config := map[string]interface{}{}
+	flag.VisitAll(func(f *flag.Flag) {
+		path := strings.Split(f.Name, ".")
+		node := config
+
+		for len(path) > 1 {
+			child, ok := node[path[0]]
+			if !ok {
+				child = map[string]interface{}{}
+				node[path[0]] = child
+			}
+			node = child.(map[string]interface{})
+
+			path = path[1:]
+		}
+
+		name, _ := flag.UnquoteUsage(f)
+		if name == "duration" {
+			node[path[0]] = f.Value.String()
+		} else {
+			node[path[0]] = f.Value
+		}
+	})
+
+	buffer := bytes.Buffer{}
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetIndent("", "    ")
+	err := encoder.Encode(&config)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(name, buffer.Bytes(), perm)
 }
